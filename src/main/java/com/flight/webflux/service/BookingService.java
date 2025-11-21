@@ -9,10 +9,10 @@ public interface BookingService {
 
     Mono<Map<String, Object>> bookTicket(String flightId, BookingRequest req);
 
-//    Mono<Map<String, Object>> getTicketByPnr(String pnr);
-//
-//    Mono<Map<String, Object>> getBookingHistory(String email);
-//
-//    Mono<Map<String, Object>> cancelBooking(String pnr);
+    Mono<Map<String, Object>> getTicketByPnr(String pnr);
+
+    Mono<Map<String, Object>> getBookingHistory(String email);
+
+    Mono<Map<String, Object>> cancelBooking(String pnr);
 }
 

@@ -39,7 +39,7 @@ public class BookingServiceImplementation implements BookingService {
                         return Mono.error(new RuntimeException("Not enough seats available"));
                     }
 
-                    
+                   
                     Booking booking = new Booking();
                     booking.setPnr(FlightIDGenerator.generatePnr());
                     booking.setEmail(req.getEmail());
@@ -52,14 +52,13 @@ public class BookingServiceImplementation implements BookingService {
                     booking.setCancelled(false);
                     booking.setFlightId(flight.getId());
 
-                    // Reduce flight seats
+                  
                     flight.setAvailableSeats(flight.getAvailableSeats() - req.getNumberOfSeats());
 
                     return flightRepo.save(flight)
                             .then(bookingRepo.save(booking))
                             .flatMap(savedBooking -> {
 
-                                // Convert passengers DTO → passenger entities
                                 List<Passenger> pList = new ArrayList<>();
 
                                 for (int i = 0; i < req.getPassengers().size(); i++) {
@@ -88,6 +87,97 @@ public class BookingServiceImplementation implements BookingService {
                 });
     }
 
-   
-}
+    @Override
+    public Mono<Map<String, Object>> getTicketByPnr(String pnr) {
+        return bookingRepo.findByPnr(pnr)
+                .switchIfEmpty(Mono.error(new RuntimeException("Booking not found")))
+                .flatMap(booking ->
+                        flightRepo.findById(booking.getFlightId())
+                                .flatMap(flight ->
+                                        passengerRepo.findAll()
+                                                .filter(p -> p.getBookingId().equals(booking.getId()))
+                                                .collectList()
+                                                .map(passengers -> {
 
+                                                    Map<String, Object> resp = new LinkedHashMap<>();
+                                                    resp.put("pnr", booking.getPnr());
+                                                    resp.put("email", booking.getEmail());
+                                                    resp.put("name", booking.getName());
+                                                    resp.put("source", flight.getSource());
+                                                    resp.put("destination", flight.getDestination());
+                                                    resp.put("journeyDateTime", booking.getTimeOfJourney());
+                                                    resp.put("mealPreference", booking.getMealPreference());
+
+                                                    List<Map<String, Object>> pList = new ArrayList<>();
+                                                    for (Passenger p : passengers) {
+                                                        Map<String, Object> pm = new HashMap<>();
+                                                        pm.put("name", p.getName());
+                                                        pm.put("gender", p.getGender());
+                                                        pm.put("age", p.getAge());
+                                                        pm.put("seatNumber", p.getSeatNumber());
+                                                        pList.add(pm);
+                                                    }
+                                                    resp.put("passengers", pList);
+
+                                                    return resp;
+                                                })
+                                )
+                );
+    }
+
+    @Override
+    public Mono<Map<String, Object>> getBookingHistory(String email) {
+        return bookingRepo.findByEmail(email)
+                .flatMap(b -> flightRepo.findById(b.getFlightId())
+                        .map(f -> {
+                            Map<String, Object> item = new LinkedHashMap<>();
+                            item.put("pnr", b.getPnr());
+                            item.put("date", b.getTimeOfJourney().toLocalDate().toString());
+                            item.put("status", b.isCancelled() ? "CANCELLED" : "BOOKED");
+                            item.put("flightId", f.getFlightId());
+                            return item;
+                        }))
+                .collectList()
+                .map(list -> {
+                    Map<String, Object> resp = new LinkedHashMap<>();
+                    resp.put("email", email);
+                    resp.put("history", list);
+                    return resp;
+                });
+    }
+
+    @Override
+    public Mono<Map<String, Object>> cancelBooking(String pnr) {
+
+        return bookingRepo.findByPnr(pnr)
+                .switchIfEmpty(Mono.error(new RuntimeException("Booking not found")))
+                .flatMap(booking -> {
+
+                    if (booking.isCancelled()) {
+                        return Mono.error(new RuntimeException("Booking already cancelled"));
+                    }
+
+                    LocalDateTime now = LocalDateTime.now();
+                    LocalDateTime deadline = booking.getTimeOfJourney().minusHours(24);
+
+                    if (!now.isBefore(deadline)) {
+                        return Mono.error(new RuntimeException("Cannot cancel within 24 hours of journey"));
+                    }
+
+                    booking.setCancelled(true);
+
+                    return bookingRepo.save(booking)
+                            .then(flightRepo.findById(booking.getFlightId()))
+                            .flatMap(flight -> {
+                                flight.setAvailableSeats(flight.getAvailableSeats() + booking.getNumberOfSeats());
+                                return flightRepo.save(flight);
+                            })
+                            .then(Mono.fromSupplier(() -> {
+                                Map<String, Object> resp = new LinkedHashMap<>();
+                                resp.put("pnr", pnr);
+                                resp.put("message", "Booking cancelled successfully");
+                                return resp;
+                            }));
+                });
+    }
+}
